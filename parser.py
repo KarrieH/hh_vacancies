@@ -6,6 +6,7 @@ from io import StringIO
 from html.parser import HTMLParser
 import pandas as pd
 import time
+from tqdm import tqdm
 
 PATH = "files"
 
@@ -27,11 +28,13 @@ class MLStripper(HTMLParser):
 
 def strip_tags(html):
     s = MLStripper()
+    if not html:
+        return ""
     s.feed(html)
     return s.get_data()
 
 
-class Parser():
+class Parser:
     def __init__(self, text, area, per_page):
         self.text = "NAME:" + text
         self.area = area
@@ -72,23 +75,7 @@ class Parser():
         return l
 
     def process_key_skills(self, skills):
-        return ", ".join([skill["name"] for skill in skills])
-
-    def append_to_df(self, df, row):
-        try:
-            lat = row["address"]["lat"]
-        except TypeError:
-            lat = 0
-        try:
-            lng = row["address"]["lng"]
-        except TypeError:
-            lng = 0
-        return df.append(
-            pd.DataFrame(
-                {"id": row["id"], "name": row["name"],
-                 "key_skills": self.process_key_skills(row["key_skills"]),
-                 "description": strip_tags(row["description"]), "address_lat": lat,
-                 "address_lng": lng}, index=[0]))
+        return ",".join([skill["name"] for skill in skills])
 
     def make_save_df(self, pages, name):
         df = self.make_df(pages)
@@ -96,43 +83,62 @@ class Parser():
 
     def getPages(self, n_pages):
         urls = []
+        snippets = []
         for i in range(n_pages):
             data = json.loads((self.getPage(i)))
             urls = urls + [elem["url"] for elem in data["items"]]
-        return urls
+            snippets = snippets + [elem["snippet"] for elem in data["items"]]
+        return urls, snippets
 
     def Parse(self, pages):
-        urls = self.getPages(pages)
-        loop = asyncio.get_event_loop()
-        htmls = loop.run_until_complete(self.get(urls, loop))
-        loop.close()
-        htmls = [json.loads(elem) for elem in htmls[0]]
-        return htmls
+        urls, snippets = self.getPages(pages)
+        # loop = asyncio.get_event_loop()
+        # htmls = loop.run_until_complete(self.get(urls, loop))
+        # loop.close()
+        htmls = []
+        for url in urls:
+            req = requests.get(url)
+            html = req.content.decode()
+            req.close()
+            htmls.append(html)
+        htmls = [json.loads(elem) for elem in htmls]
+        return htmls, snippets
 
     def make_df(self, pages):
-        df = pd.DataFrame(columns=['id', 'name', 'skills', 'desc', 'lat', 'lng'],
+        df = pd.DataFrame(columns=['id', 'name', 'skills', 'desc', 'exp', 'spec', "area","resp","req"],
                           index=range(pages * self.per_page))
-        rows = self.Parse(pages)
+        rows, snippets = self.Parse(pages)
         for i, row in enumerate(rows):
-            try:
-                lat = row["address"]["lat"]
-            except TypeError:
-                lat = 0
-            try:
-                lng = row["address"]["lng"]
-            except TypeError:
-                lng = 0
             df.iloc[i]["id"] = row["id"]
             df.iloc[i]["name"] = row["name"]
             df.iloc[i]["skills"] = self.process_key_skills(row["key_skills"])
             df.iloc[i]["desc"] = strip_tags(row["description"])
-            df.iloc[i]["lat"] = lat
-            df.iloc[i]["lng"] = lng
+            df.iloc[i]["ex"] = row["experience"]["name"]
+            df.iloc[i]["spec"] = self.process_key_skills(row["specializations"])
+            df.iloc[i]["area"] = row["area"]["name"]
+            df.iloc[i]["resp"] = strip_tags(snippets[i]["responsibility"])
+            df.iloc[i]["req"] = strip_tags(snippets[i]["requirement"])
+
         return df
 
 
-parser = Parser("Аналитик", 1, 20)
+parser_ml_spb = Parser("machine learning", 2, 20)
+parser_de_spb = Parser("data engineering", 2, 20)
+parser_ds_spb = Parser("data science", 2, 20)
+parser_ml_msk = Parser("machine learning", 1, 20)
+parser_de_msk = Parser("data engineering", 1, 20)
+parser_ds_msk = Parser("data science", 1, 20)
+parser_ml_random = Parser("machine learning", 1202, 20)
+parser_de_random = Parser("data engineering", 1202, 20)
+parser_ds_random = Parser("data science", 1202, 20)
+
 time_before = time.time()
-parser.make_save_df(1, 'data.csv')
+parsers = [parser_ml_spb, parser_de_spb, parser_ds_spb,
+           parser_ml_msk, parser_de_msk, parser_ds_msk,
+           parser_ml_random, parser_de_random, parser_ds_random]
+
+for i, parser in tqdm(enumerate(parsers)):
+    parser.make_save_df(1, f'data_{i}.csv')
+
 time_after = time.time()
 print(time_after - time_before)
